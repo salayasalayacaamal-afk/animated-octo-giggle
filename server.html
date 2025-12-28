@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Minecraft 2D - Jugadores Visibles</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        @import url('https://fonts.cdnfonts.com/css/minecraft-4');
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; outline: none; }
+        body { margin: 0; overflow: hidden; background: #87CEEB; font-family: 'Minecraft', sans-serif; touch-action: none; user-select: none; }
+        canvas { display: block; image-rendering: pixelated; }
+
+        /* Capas de Interfaz */
+        .ui-screen { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(0,0,0,0.9); z-index: 10000; }
+        .hidden { display: none !important; }
+        
+        .mc-btn { 
+            background: #5c5c5c; border-bottom: 4px solid #000; color: white; padding: 12px; 
+            width: 260px; margin: 8px; text-align: center; cursor: pointer; font-size: 16px; 
+            box-shadow: inset -3px -3px 0px #333;
+        }
+        .mc-btn:active { transform: translateY(2px); border-bottom-width: 2px; }
+        .mc-input { padding: 10px; width: 260px; text-align: center; background: #000; color: #fff; border: 2px solid #555; font-size: 18px; margin-bottom: 10px; }
+
+        /* Barra de Estado */
+        .status-bar { position: fixed; top: 10px; right: 10px; background: rgba(0,0,0,0.7); padding: 5px 15px; border: 2px solid #444; color: white; font-size: 12px; z-index: 5000; border-radius: 4px; display: flex; align-items: center; }
+        .dot { width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; }
+
+        /* HUD */
+        .hud { position: fixed; inset: 0; pointer-events: none; display: none; }
+        .joy-base { position: absolute; bottom: 30px; left: 30px; width: 130px; height: 130px; background: rgba(255,255,255,0.1); border-radius: 50%; pointer-events: auto; border: 1px solid rgba(255,255,255,0.2); }
+        .joy-stick { position: absolute; top: 50%; left: 50%; width: 50px; height: 50px; background: rgba(255,255,255,0.3); border-radius: 50%; transform: translate(-50%, -50%); border: 2px solid #fff; }
+        
+        .controls { position: absolute; bottom: 30px; right: 30px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; pointer-events: auto; }
+        .btn-ui { width: 70px; height: 70px; background: rgba(0,0,0,0.6); border: 2px solid #fff; border-radius: 10px; color: white; display: flex; align-items: center; justify-content: center; font-size: 30px; }
+
+        .hotbar { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; gap: 5px; background: #333; padding: 5px; border: 4px solid #000; pointer-events: auto; }
+        .slot { width: 50px; height: 50px; background: #8b8b8b; border: 4px solid #373737; display: flex; align-items: center; justify-content: center; position: relative; }
+        .slot.selected { border-color: #fff; background: #aaa; }
+        .slot-n { position: absolute; bottom: 2px; right: 4px; color: white; font-size: 12px; }
+
+        /* Chat */
+        .chat-container { position: fixed; top: 15px; left: 15px; width: 240px; pointer-events: none; }
+        #chat-log { height: 100px; overflow: hidden; color: white; font-size: 12px; text-shadow: 1px 1px #000; background: rgba(0,0,0,0.1); }
+        #chat-input { background: rgba(0,0,0,0.5); border: 1px solid #444; color: white; width: 100%; padding: 6px; pointer-events: auto; display: none; margin-top: 5px; }
+    </style>
+</head>
+<body>
+
+<div class="status-bar">
+    <div id="status-dot" class="dot bg-red-600"></div>
+    <span id="status-text">OFFLINE</span>
+</div>
+
+<div id="screen-start" class="ui-screen">
+    <h1 class="text-4xl text-white mb-10 text-center" style="text-shadow: 4px 4px #000;">MINECRAFT 2D</h1>
+    <div class="mc-btn bg-green-700" onclick="startLocal()">SOLO</div>
+    <div class="mc-btn bg-blue-700" onclick="showMultiMenu()">MULTIJUGADOR</div>
+</div>
+
+<div id="screen-multi" class="ui-screen hidden">
+    <h2 class="text-2xl text-white mb-8">CONEXIÓN LOCAL</h2>
+    <div class="mc-btn bg-emerald-600" onclick="initP2P('host')">CREAR MUNDO</div>
+    <div class="flex flex-col items-center mt-6">
+        <input type="text" id="join-code" placeholder="CÓDIGO AMIGO" maxlength="4" class="mc-input">
+        <div class="mc-btn bg-sky-600" onclick="initP2P('join')">UNIRSE</div>
+    </div>
+    <div class="mt-6 text-white underline cursor-pointer" onclick="location.reload()">VOLVER</div>
+</div>
+
+<div id="screen-host" class="ui-screen hidden">
+    <div class="text-xl text-white mb-4">TU CÓDIGO DE SALA:</div>
+    <div id="my-code" class="text-6xl text-yellow-400 font-bold mb-10 tracking-widest">...</div>
+    <div class="mc-btn bg-green-600" onclick="beginGame()">EMPEZAR AVENTURA</div>
+</div>
+
+<div id="hud" class="hud">
+    <div class="chat-container">
+        <div id="chat-log"></div>
+        <input type="text" id="chat-input" placeholder="Presiona Enter para enviar...">
+    </div>
+    <div class="joy-base" id="joy-b"><div class="joy-stick" id="joy-s"></div></div>
+    <div class="controls">
+        <div class="btn-ui" id="btn-up">⬆</div>
+        <div class="btn-ui" id="btn-mine">⛏</div>
+        <div class="btn-ui" id="btn-place">🧱</div>
+        <div class="btn-ui" id="btn-drop">📦</div>
+    </div>
+    <div class="hotbar" id="hotbar"></div>
+</div>
+
+<canvas id="canvas"></canvas>
+
+<script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const TILE = 32;
+
+    let peer, conn;
+    let isPlaying = false;
+    let world = {};
+    let otherPlayers = {};
+    let player = { x: 0, y: 0, vx: 0, vy: 0, w: 22, h: 46, ground: false, selected: 0, hp: 10 };
+    let cam = { x: 0, y: 0 };
+    let keys = {};
+    let touchX = 0;
+
+    const blockStyles = { grass: '#4CAF50', dirt: '#8B4513', stone: '#7a7a7a', wood: '#5D4037', leaves: '#2E7D32', bedrock: '#222' };
+    const blockIcons = { grass: '🌿', dirt: '🟫', stone: '🪨', wood: '🪵', leaves: '🍃', bedrock: '⬛' };
+
+    player.inv = [
+        {id:'grass',n:64}, {id:'dirt',n:64}, {id:'stone',n:64},
+        {id:'wood',n:32}, {id:'leaves',n:32}, null, null, null, null
+    ];
+
+    // --- GENERACIÓN DE MUNDO ---
+    function generateWorld() {
+        for(let x = -80; x < 80; x++) {
+            let h = 15 + Math.floor(Math.sin(x * 0.12) * 4);
+            if(x === 0) { player.x = 0; player.y = (h - 5) * TILE; }
+            for(let y = h; y < 35; y++) {
+                world[`${x},${y}`] = y >= 33 ? 'bedrock' : (y === h ? 'grass' : (y < h + 3 ? 'dirt' : 'stone'));
+            }
+            // Árboles (Madera y Hojas)
+            if(Math.abs(x) % 10 === 0 && x !== 0) {
+                for(let i=1; i<=4; i++) world[`${x},${h-i}`] = 'wood';
+                for(let dx=-2; dx<=2; dx++) for(let dy=-2; dy<=0; dy++) 
+                    if(!world[`${x+dx},${h-5+dy}`]) world[`${x+dx},${h-5+dy}`] = 'leaves';
+            }
+        }
+    }
+
+    // --- MULTIJUGADOR P2P ---
+    function initP2P(mode) {
+        const id = Math.random().toString(36).substring(2, 6).toUpperCase();
+        peer = new Peer(id);
+
+        peer.on('open', (id) => {
+            document.getElementById('status-dot').className = 'dot bg-green-500';
+            document.getElementById('status-text').innerText = 'ONLINE ON';
+            if(mode === 'host') {
+                document.getElementById('my-code').innerText = id;
+                document.getElementById('screen-multi').classList.add('hidden');
+                document.getElementById('screen-host').classList.remove('hidden');
+            } else {
+                const target = document.getElementById('join-code').value.toUpperCase();
+                conn = peer.connect(target);
+                setupConnection();
+            }
+        });
+
+        peer.on('connection', (c) => {
+            conn = c;
+            setupConnection();
+            addChat("¡Jugador conectado!");
+        });
+    }
+
+    function setupConnection() {
+        conn.on('data', (data) => {
+            if(data.type === 'pos') otherPlayers[conn.peer] = data.data;
+            if(data.type === 'block') { if(data.val) world[data.pos] = data.val; else delete world[data.pos]; }
+            if(data.type === 'chat') addChat("Amigo: " + data.msg);
+        });
+        if(!isPlaying) beginGame();
+    }
+
+    function addChat(msg) {
+        const log = document.getElementById('chat-log');
+        const d = document.createElement('div');
+        d.innerText = msg; log.appendChild(d);
+        if(log.childNodes.length > 7) log.removeChild(log.firstChild);
+    }
+
+    // --- ACCIONES DE JUEGO ---
+    window.startLocal = () => { generateWorld(); beginGame(); };
+    window.showMultiMenu = () => { document.getElementById('screen-start').classList.add('hidden'); document.getElementById('screen-multi').classList.remove('hidden'); };
+    window.beginGame = () => {
+        if(Object.keys(world).length === 0) generateWorld();
+        document.querySelectorAll('.ui-screen').forEach(s => s.classList.add('hidden'));
+        document.getElementById('hud').style.display = 'block';
+        if(conn) document.getElementById('chat-input').style.display = 'block';
+        isPlaying = true;
+        updateHotbar();
+    };
+
+    function collide(nx, ny) {
+        let l = Math.floor(nx/TILE), r = Math.floor((nx+player.w)/TILE);
+        let t = Math.floor(ny/TILE), b = Math.floor((ny+player.h)/TILE);
+        for(let x=l; x<=r; x++) for(let y=t; y<=b; y++) if(world[`${x},${y}`]) return true;
+        return false;
+    }
+
+    function update() {
+        if(!isPlaying) return;
+        let dx = (keys.KeyA||keys.ArrowLeft?-1:0) + (keys.KeyD||keys.ArrowRight?1:0) + touchX;
+        player.vx = dx * 5.5;
+        if((keys.Space||keys.ArrowUp) && player.ground) { player.vy = -12; player.ground = false; }
+        
+        player.vy += 0.55;
+        player.x += player.vx;
+        if(collide(player.x, player.y)) player.x -= player.vx;
+        player.y += player.vy;
+        if(collide(player.x, player.y)) { if(player.vy > 0) player.ground = true; player.y -= player.vy; player.vy = 0; }
+        else player.ground = false;
+
+        cam.x += (player.x - canvas.width/2 - cam.x) * 0.1;
+        cam.y += (player.y - canvas.height/2 - cam.y) * 0.1;
+
+        if(conn && conn.open && Math.floor(Date.now()/40)%2===0) {
+            conn.send({type: 'pos', data: {x: player.x, y: player.y}});
+        }
+    }
+
+    function draw() {
+        ctx.fillStyle = '#87CEEB'; ctx.fillRect(0,0,canvas.width,canvas.height);
+        ctx.save(); ctx.translate(-cam.x, -cam.y);
+        
+        // Bloques visibles
+        for(let p in world) {
+            let [x,y] = p.split(',').map(Number);
+            if(x*TILE > cam.x - TILE && x*TILE < cam.x + canvas.width + TILE) {
+                ctx.fillStyle = blockStyles[world[p]];
+                ctx.fillRect(x*TILE, y*TILE, TILE, TILE);
+            }
+        }
+
+        // Otros jugadores (Visibles y claros)
+        for(let id in otherPlayers) {
+            ctx.fillStyle = '#3498db'; // Azul para el amigo
+            ctx.fillRect(otherPlayers[id].x, otherPlayers[id].y, player.w, player.h);
+        }
+
+        // Mi jugador
+        ctx.fillStyle = '#e74c3c'; // Rojo para mí
+        ctx.fillRect(player.x, player.y, player.w, player.h);
+        
+        // VIDA PRIVADA (Solo local)
+        ctx.fillStyle = '#2ecc71';
+        ctx.fillRect(player.x, player.y - 10, (player.hp/10)*player.w, 5);
+
+        ctx.restore();
+    }
+
+    function action(place) {
+        let side = touchX || (player.vx >= 0 ? 1 : -1);
+        let gx = Math.floor((player.x + player.w/2 + side * TILE)/TILE);
+        let gy = Math.floor((player.y + player.h/2)/TILE);
+        let pos = `${gx},${gy}`;
+
+        if(!place) {
+            if(world[pos] && world[pos] !== 'bedrock') {
+                let type = world[pos];
+                let s = player.inv.find(i => i && i.id === type);
+                if(s) s.n++; else { let empty = player.inv.findIndex(i => !i); if(empty!==-1) player.inv[empty] = {id:type, n:1}; }
+                delete world[pos];
+                if(conn) conn.send({type: 'block', pos: pos, val: null});
+            }
+        } else {
+            let s = player.inv[player.selected];
+            if(s && s.n > 0 && !world[pos]) {
+                world[pos] = s.id; s.n--; if(s.n <= 0) player.inv[player.selected] = null;
+                if(conn) conn.send({type: 'block', pos: pos, val: world[pos]});
+            }
+        }
+        updateHotbar();
+    }
+
+    function updateHotbar() {
+        const h = document.getElementById('hotbar'); h.innerHTML = '';
+        player.inv.forEach((s, i) => {
+            const d = document.createElement('div');
+            d.className = `slot ${i===player.selected?'selected':''}`;
+            d.onclick = () => { player.selected = i; updateHotbar(); };
+            if(s) d.innerHTML = `<span>${blockIcons[s.id]}</span><span class="slot-n">${s.n}</span>`;
+            h.appendChild(d);
+        });
+    }
+
+    // Controles Touch
+    document.getElementById('btn-up').onclick = () => { if(player.ground) player.vy = -12; };
+    document.getElementById('btn-mine').onclick = () => action(false);
+    document.getElementById('btn-place').onclick = () => action(true);
+    document.getElementById('btn-drop').onclick = () => {
+        let s = player.inv[player.selected];
+        if(s) { s.n--; if(s.n <= 0) player.inv[player.selected] = null; updateHotbar(); }
+    };
+
+    let jB = document.getElementById('joy-b'), jS = document.getElementById('joy-s');
+    jB.addEventListener('touchmove', e => {
+        let r = jB.getBoundingClientRect(), dx = e.touches[0].clientX - (r.left + r.width/2);
+        let dist = Math.max(-50, Math.min(50, dx));
+        jS.style.left = `calc(50% + ${dist}px)`; touchX = dist/50;
+    });
+    jB.addEventListener('touchend', () => { jS.style.left = '50%'; touchX = 0; });
+
+    document.getElementById('chat-input').addEventListener('keypress', e => {
+        if(e.key === 'Enter' && e.target.value && conn) {
+            addChat("Yo: " + e.target.value);
+            conn.send({type: 'chat', msg: e.target.value}); e.target.value = '';
+        }
+    });
+
+    window.addEventListener('resize', () => { canvas.width = innerWidth; canvas.height = innerHeight; });
+    window.dispatchEvent(new Event('resize'));
+    window.addEventListener('keydown', e => { 
+        keys[e.code] = true; 
+        if(e.code.startsWith('Digit')) { player.selected = parseInt(e.code.slice(-1))-1; updateHotbar(); }
+    });
+    window.addEventListener('keyup', e => keys[e.code] = false);
+
+    function loop() { update(); draw(); requestAnimationFrame(loop); }
+    loop();
+</script>
+</body>
+</html>
+
+
